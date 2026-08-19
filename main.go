@@ -1,12 +1,12 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"net/http"
 )
 
 func main() {
+	config := apiConfig{}
 	mux := http.NewServeMux()
 
 	port := "8080"
@@ -16,9 +16,12 @@ func main() {
 		Handler: mux,
 	}
 
-	mux.Handle("/app/", http.StripPrefix("/app/", http.FileServer(http.Dir("./"))))
+	mux.Handle("/app/", config.middlewareMetricsInc(http.StripPrefix("/app/", http.FileServer(http.Dir("./")))))
 
-	mux.HandleFunc("/healthz", handleHealthz)
-	mux.HandleFunc("/test", func(w http.ResponseWriter, r *http.Request) { fmt.Println("Hello, World!") })
+	mux.HandleFunc("GET /healthz", handleHealthz)
+
+	mux.HandleFunc("GET /metrics", config.handleMetrics)
+	mux.HandleFunc("POST /reset", config.handleReset)
+
 	log.Fatal(s.ListenAndServe())
 }
