@@ -18,10 +18,11 @@ func main() {
 
 	mux.Handle("/app/", config.middlewareMetricsInc(http.StripPrefix("/app/", http.FileServer(http.Dir("./")))))
 
-	mux.HandleFunc("GET /healthz", handleHealthz)
+	mux.HandleFunc("GET /api/healthz", handleHealthz)
+	mux.HandleFunc("POST /api/validate_chirp", handleValidateChirp)
 
-	mux.HandleFunc("GET /metrics", config.handleMetrics)
-	mux.HandleFunc("POST /reset", config.handleReset)
+	mux.HandleFunc("GET /admin/metrics", config.handleMetrics)
+	mux.HandleFunc("POST /admin/reset", config.handleReset)
 
 	log.Fatal(s.ListenAndServe())
 }
