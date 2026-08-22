@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/Drag0neUsz/Chirpy/internal/auth"
 	"github.com/Drag0neUsz/Chirpy/internal/database"
 	"github.com/lib/pq"
 )
@@ -167,7 +168,7 @@ type User struct {
 	Email     string    `json:"email"`
 }
 
-func (cfg *apiConfig) handleCreateUser(w http.ResponseWriter, r *http.Request) {
+func (cfg *apiConfig) handleRegisterUser(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Could not read request body")
@@ -176,7 +177,8 @@ func (cfg *apiConfig) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
 	var e struct {
-		Email string `json:"email"`
+		Email    string `json:"email"`
+		Password string `json:"password"`
 	}
 	err = json.Unmarshal(body, &e)
 	if err != nil {
@@ -187,8 +189,19 @@ func (cfg *apiConfig) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, http.StatusBadRequest, "Email is required")
 		return
 	}
-
-	user, err := cfg.dbQueries.CreateUser(r.Context(), e.Email)
+	if e.Password == "" {
+		respondWithError(w, http.StatusBadRequest, "Password is required")
+		return
+	}
+	hashedPassword, err := auth.HashPassword(e.Password)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Could not hash password")
+		return
+	}
+	user, err := cfg.dbQueries.CreateUser(r.Context(), database.CreateUserParams{
+		Email:          e.Email,
+		HashedPassword: hashedPassword,
+	})
 	if err != nil {
 		if pqErr, ok := err.(*pq.Error); ok && pqErr.Code == "23505" {
 			respondWithError(w, http.StatusConflict, "User already exists")
@@ -199,6 +212,53 @@ func (cfg *apiConfig) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondWithJSON(w, http.StatusCreated, User{
+		ID:        user.ID,
+		CreatedAt: user.CreatedAt,
+		UpdatedAt: user.UpdatedAt,
+		Email:     user.Email,
+	})
+}
+
+func (cfg *apiConfig) handleLoginUser(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Could not read request body")
+		return
+	}
+	defer r.Body.Close()
+
+	var e struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	err = json.Unmarshal(body, &e)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Invalid JSON body")
+		return
+	}
+	if e.Email == "" {
+		respondWithError(w, http.StatusBadRequest, "Email is required")
+		return
+	}
+	if e.Password == "" {
+		respondWithError(w, http.StatusBadRequest, "Password is required")
+		return
+	}
+	user, err := cfg.dbQueries.GetUser(r.Context(), e.Email)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "Invalid email or password")
+		return
+	}
+	valid, err := auth.CheckPasswordHash(e.Password, user.HashedPassword)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Could not check password")
+		return
+	}
+	if !valid {
+		respondWithError(w, http.StatusUnauthorized, "Invalid email or password")
+		return
+	}
+	respondWithJSON(w, http.StatusOK, User{
 		ID:        user.ID,
 		CreatedAt: user.CreatedAt,
 		UpdatedAt: user.UpdatedAt,
