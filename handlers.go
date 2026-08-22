@@ -17,6 +17,8 @@ import (
 	"github.com/lib/pq"
 )
 
+const accessTokenDuration = time.Hour
+
 type apiConfig struct {
 	fileserverHits atomic.Int32
 	dbQueries      *database.Queries
@@ -174,11 +176,12 @@ func respondWithJSON(w http.ResponseWriter, code int, payload interface{}) {
 }
 
 type User struct {
-	ID        uuid.UUID `json:"id"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	Email     string    `json:"email"`
-	Token     string    `json:"token"`
+	ID           uuid.UUID `json:"id"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	Email        string    `json:"email"`
+	Token        string    `json:"token"`
+	RefreshToken string    `json:"refresh_token"`
 }
 
 func (cfg *apiConfig) handleRegisterUser(w http.ResponseWriter, r *http.Request) {
@@ -241,9 +244,8 @@ func (cfg *apiConfig) handleLoginUser(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
 	var e struct {
-		Email            string `json:"email"`
-		Password         string `json:"password"`
-		ExpiresInSeconds int    `json:"expires_in_seconds"`
+		Email    string `json:"email"`
+		Password string `json:"password"`
 	}
 	err = json.Unmarshal(body, &e)
 	if err != nil {
@@ -272,19 +274,71 @@ func (cfg *apiConfig) handleLoginUser(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, http.StatusUnauthorized, "Invalid email or password")
 		return
 	}
-	if e.ExpiresInSeconds == 0 || e.ExpiresInSeconds > 3600 {
-		e.ExpiresInSeconds = 3600
-	}
-	token, err := auth.MakeJWT(user.ID, cfg.tokenSecret, time.Duration(e.ExpiresInSeconds)*time.Second)
+	token, err := auth.MakeJWT(user.ID, cfg.tokenSecret, accessTokenDuration)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Could not make JWT")
 		return
 	}
-	respondWithJSON(w, http.StatusOK, User{
-		ID:        user.ID,
-		CreatedAt: user.CreatedAt,
-		UpdatedAt: user.UpdatedAt,
-		Email:     user.Email,
-		Token:     token,
+	refreshToken, err := auth.MakeRefreshToken()
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Could not make refresh token")
+		return
+	}
+	_, err = cfg.dbQueries.CreateRefreshToken(r.Context(), database.CreateRefreshTokenParams{
+		Token:  refreshToken,
+		UserID: user.ID,
 	})
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Could not create refresh token")
+		return
+	}
+	respondWithJSON(w, http.StatusOK, User{
+		ID:           user.ID,
+		CreatedAt:    user.CreatedAt,
+		UpdatedAt:    user.UpdatedAt,
+		Email:        user.Email,
+		Token:        token,
+		RefreshToken: refreshToken,
+	})
+}
+
+func (cfg *apiConfig) handleRefresh(w http.ResponseWriter, r *http.Request) {
+	refreshToken, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "1Unauthorized")
+		return
+	}
+	dataRow, err := cfg.dbQueries.GetUserIDFromRefreshToken(r.Context(), refreshToken)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "2Unauthorized")
+		return
+	}
+	if dataRow.RevokedAt.Valid {
+		respondWithError(w, http.StatusUnauthorized, "3Unauthorized")
+		return
+	}
+	if dataRow.ExpiresAt.Before(time.Now()) {
+		respondWithError(w, http.StatusUnauthorized, "4Unauthorized")
+		return
+	}
+	accessToken, err := auth.MakeJWT(dataRow.UserID, cfg.tokenSecret, accessTokenDuration)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "5Unauthorized")
+		return
+	}
+	respondWithJSON(w, http.StatusOK, map[string]string{"token": accessToken})
+}
+
+func (cfg *apiConfig) handleRevoke(w http.ResponseWriter, r *http.Request) {
+	refreshToken, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+	err = cfg.dbQueries.RevokeRefreshToken(r.Context(), refreshToken)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Could not revoke refresh token")
+		return
+	}
+	respondWithJSON(w, http.StatusNoContent, map[string]string{"status": "success"})
 }
