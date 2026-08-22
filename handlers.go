@@ -21,6 +21,7 @@ type apiConfig struct {
 	fileserverHits atomic.Int32
 	dbQueries      *database.Queries
 	platform       string
+	tokenSecret    string
 }
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
@@ -111,7 +112,18 @@ func (cfg *apiConfig) handleCreateChirp(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	defer r.Body.Close()
-
+	token, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		fmt.Println("Error getting bearer token:", err)
+		respondWithError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+	userID, err := auth.ValidateJWT(token, cfg.tokenSecret)
+	if err != nil {
+		fmt.Println("Error validating JWT:", err)
+		respondWithError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
 	chirp := Chirp{}
 	err = json.Unmarshal(body, &chirp)
 	if err != nil {
@@ -125,7 +137,7 @@ func (cfg *apiConfig) handleCreateChirp(w http.ResponseWriter, r *http.Request) 
 	}
 	dbChirp, err := cfg.dbQueries.CreateChirp(r.Context(), database.CreateChirpParams{
 		Body:   chirp.Body,
-		UserID: chirp.UserID,
+		UserID: userID,
 	})
 	chirp.clean()
 	respondWithJSON(w, http.StatusCreated, Chirp{
@@ -166,6 +178,7 @@ type User struct {
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	Email     string    `json:"email"`
+	Token     string    `json:"token"`
 }
 
 func (cfg *apiConfig) handleRegisterUser(w http.ResponseWriter, r *http.Request) {
@@ -228,8 +241,9 @@ func (cfg *apiConfig) handleLoginUser(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
 	var e struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
+		Email            string `json:"email"`
+		Password         string `json:"password"`
+		ExpiresInSeconds int    `json:"expires_in_seconds"`
 	}
 	err = json.Unmarshal(body, &e)
 	if err != nil {
@@ -258,10 +272,19 @@ func (cfg *apiConfig) handleLoginUser(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, http.StatusUnauthorized, "Invalid email or password")
 		return
 	}
+	if e.ExpiresInSeconds == 0 || e.ExpiresInSeconds > 3600 {
+		e.ExpiresInSeconds = 3600
+	}
+	token, err := auth.MakeJWT(user.ID, cfg.tokenSecret, time.Duration(e.ExpiresInSeconds)*time.Second)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Could not make JWT")
+		return
+	}
 	respondWithJSON(w, http.StatusOK, User{
 		ID:        user.ID,
 		CreatedAt: user.CreatedAt,
 		UpdatedAt: user.UpdatedAt,
 		Email:     user.Email,
+		Token:     token,
 	})
 }

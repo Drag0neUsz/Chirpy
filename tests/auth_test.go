@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"net/http"
 	"testing"
 	"time"
 
@@ -128,4 +129,26 @@ func TestValidateJWTInvalidToken(t *testing.T) {
 		t.Fatalf("Expecting error, got nil")
 	}
 	t.Log("ValidateJWT(invalid-token, test-secret):", id, "->", err)
+}
+
+func TestGetBearerToken(t *testing.T) {
+	headers := http.Header{}
+	headers.Set("Authorization", "Bearer test-token")
+	token, err := auth.GetBearerToken(headers)
+	if err != nil {
+		t.Fatalf("Error getting bearer token: %v", err)
+	}
+	if token != "test-token" {
+		t.Fatalf("Expected test-token, got %s", token)
+	}
+	t.Log("GetBearerToken(headers):", token, "->", err)
+}
+
+func TestGetBearerTokenNoToken(t *testing.T) {
+	headers := http.Header{}
+	token, err := auth.GetBearerToken(headers)
+	if err == nil {
+		t.Fatalf("Expected error, got nil")
+	}
+	t.Log("GetBearerToken(headers):", token, "->", err)
 }

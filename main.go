@@ -25,9 +25,15 @@ func main() {
 	}
 	defer db.Close()
 
+	tokenSecret := os.Getenv("TOKEN_SECRET")
+	if tokenSecret == "" {
+		log.Fatal("TOKEN_SECRET is not set")
+	}
+
 	config := apiConfig{
-		dbQueries: database.New(db),
-		platform:  strings.ToLower(os.Getenv("PLATFORM")),
+		dbQueries:   database.New(db),
+		platform:    strings.ToLower(os.Getenv("PLATFORM")),
+		tokenSecret: tokenSecret,
 	}
 	mux := http.NewServeMux()
 
