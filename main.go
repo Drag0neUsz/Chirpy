@@ -34,6 +34,7 @@ func main() {
 		dbQueries:   database.New(db),
 		platform:    strings.ToLower(os.Getenv("PLATFORM")),
 		tokenSecret: tokenSecret,
+		polkaKey:    os.Getenv("POLKA_KEY"),
 	}
 	mux := http.NewServeMux()
 
@@ -56,6 +57,7 @@ func main() {
 	mux.HandleFunc("POST /api/users", config.handleRegisterUser)
 	mux.HandleFunc("POST /api/login", config.handleLoginUser)
 	mux.HandleFunc("PUT /api/users", config.handleUpdateUser)
+	mux.HandleFunc("POST /api/polka/webhooks", config.handlePolkaWebhook)
 	mux.HandleFunc("POST /api/refresh", config.handleRefresh)
 	mux.HandleFunc("POST /api/revoke", config.handleRevoke)
 
