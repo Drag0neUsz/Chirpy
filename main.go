@@ -55,10 +55,13 @@ func main() {
 	//API
 	mux.HandleFunc("POST /api/users", config.handleRegisterUser)
 	mux.HandleFunc("POST /api/login", config.handleLoginUser)
+	mux.HandleFunc("PUT /api/users", config.handleUpdateUser)
 	mux.HandleFunc("POST /api/refresh", config.handleRefresh)
 	mux.HandleFunc("POST /api/revoke", config.handleRevoke)
+
 	mux.HandleFunc("GET /api/chirps", config.handleGetChirps)
 	mux.HandleFunc("GET /api/chirps/{chirpID}", config.handleGetChirp)
 	mux.HandleFunc("POST /api/chirps", config.handleCreateChirp)
+	mux.HandleFunc("DELETE /api/chirps/{chirpID}", config.handleDeleteChirp)
 	log.Fatal(s.ListenAndServe())
 }
