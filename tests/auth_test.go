@@ -152,3 +152,25 @@ func TestGetBearerTokenNoToken(t *testing.T) {
 	}
 	t.Log("GetBearerToken(headers):", token, "->", err)
 }
+
+func TestGetAPIKey(t *testing.T) {
+	headers := http.Header{}
+	headers.Set("Authorization", "ApiKey test-api-key")
+	apiKey, err := auth.GetAPIKey(headers)
+	if err != nil {
+		t.Fatalf("Error getting API key: %v", err)
+	}
+	if apiKey != "test-api-key" {
+		t.Fatalf("Expected test-api-key, got %s", apiKey)
+	}
+	t.Log("GetAPIKey(headers):", apiKey, "->", err)
+}
+
+func TestGetAPIKeyNoAPIKey(t *testing.T) {
+	headers := http.Header{}
+	apiKey, err := auth.GetAPIKey(headers)
+	if err == nil {
+		t.Fatalf("Expected error, got nil")
+	}
+	t.Log("GetAPIKey(headers):", apiKey, "->", err)
+}

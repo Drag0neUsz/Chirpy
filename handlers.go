@@ -65,7 +65,26 @@ type Chirp struct {
 }
 
 func (cfg *apiConfig) handleGetChirps(w http.ResponseWriter, r *http.Request) {
-	chirps, err := cfg.dbQueries.GetChirps(r.Context())
+	order := strings.ToLower(r.URL.Query().Get("sort"))
+	if order != "" {
+		if order != "desc" && order != "asc" {
+			respondWithError(w, http.StatusBadRequest, "Invalid sort order")
+			return
+		}
+	}
+	authorID := r.URL.Query().Get("author_id")
+	var chirps []database.Chirp
+	var err error
+	if authorID != "" {
+		authorIDUUID, err := uuid.Parse(authorID)
+		if err != nil {
+			respondWithError(w, http.StatusBadRequest, "Invalid author ID")
+			return
+		}
+		chirps, err = cfg.dbQueries.GetChirpsByAuthorID(r.Context(), authorIDUUID)
+	} else {
+		chirps, err = cfg.dbQueries.GetChirps(r.Context())
+	}
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Could not get chirps")
 		return
@@ -79,6 +98,9 @@ func (cfg *apiConfig) handleGetChirps(w http.ResponseWriter, r *http.Request) {
 			CreatedAt: chirp.CreatedAt,
 			UpdatedAt: chirp.UpdatedAt,
 		})
+	}
+	if order == "desc" {
+		slices.Reverse(chirpsJSON)
 	}
 	respondWithJSON(w, http.StatusOK, chirpsJSON)
 }
@@ -117,13 +139,11 @@ func (cfg *apiConfig) handleCreateChirp(w http.ResponseWriter, r *http.Request) 
 	defer r.Body.Close()
 	token, err := auth.GetBearerToken(r.Header)
 	if err != nil {
-		fmt.Println("Error getting bearer token:", err)
 		respondWithError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
 	userID, err := auth.ValidateJWT(token, cfg.tokenSecret)
 	if err != nil {
-		fmt.Println("Error validating JWT:", err)
 		respondWithError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
@@ -215,13 +235,17 @@ func respondWithJSON(w http.ResponseWriter, code int, payload interface{}) {
 }
 
 type User struct {
-	ID           uuid.UUID `json:"id"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
-	Email        string    `json:"email"`
-	Token        string    `json:"token"`
-	RefreshToken string    `json:"refresh_token"`
-	IsChirpyRed  bool      `json:"is_chirpy_red"`
+	ID          uuid.UUID `json:"id"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+	Email       string    `json:"email"`
+	IsChirpyRed bool      `json:"is_chirpy_red"`
+}
+
+type UserResponseWithToken struct {
+	User
+	Token        string `json:"token"`
+	RefreshToken string `json:"refresh_token"`
 }
 
 func (cfg *apiConfig) handleRegisterUser(w http.ResponseWriter, r *http.Request) {
@@ -266,13 +290,34 @@ func (cfg *apiConfig) handleRegisterUser(w http.ResponseWriter, r *http.Request)
 		}
 		return
 	}
-
-	respondWithJSON(w, http.StatusCreated, User{
-		ID:          user.ID,
-		CreatedAt:   user.CreatedAt,
-		UpdatedAt:   user.UpdatedAt,
-		Email:       user.Email,
-		IsChirpyRed: user.IsChirpyRed,
+	token, err := auth.MakeJWT(user.ID, cfg.tokenSecret, accessTokenDuration)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Could not make JWT")
+		return
+	}
+	refreshToken, err := auth.MakeRefreshToken()
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Could not make refresh token")
+		return
+	}
+	_, err = cfg.dbQueries.CreateRefreshToken(r.Context(), database.CreateRefreshTokenParams{
+		Token:  refreshToken,
+		UserID: user.ID,
+	})
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Could not create refresh token")
+		return
+	}
+	respondWithJSON(w, http.StatusCreated, UserResponseWithToken{
+		User: User{
+			ID:          user.ID,
+			CreatedAt:   user.CreatedAt,
+			UpdatedAt:   user.UpdatedAt,
+			Email:       user.Email,
+			IsChirpyRed: user.IsChirpyRed,
+		},
+		Token:        token,
+		RefreshToken: refreshToken,
 	})
 }
 
@@ -333,18 +378,21 @@ func (cfg *apiConfig) handleLoginUser(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, http.StatusInternalServerError, "Could not create refresh token")
 		return
 	}
-	respondWithJSON(w, http.StatusOK, User{
-		ID:           user.ID,
-		CreatedAt:    user.CreatedAt,
-		UpdatedAt:    user.UpdatedAt,
-		Email:        user.Email,
+	respondWithJSON(w, http.StatusOK, UserResponseWithToken{
+		User: User{
+			ID:          user.ID,
+			CreatedAt:   user.CreatedAt,
+			UpdatedAt:   user.UpdatedAt,
+			Email:       user.Email,
+			IsChirpyRed: user.IsChirpyRed,
+		},
 		Token:        token,
 		RefreshToken: refreshToken,
-		IsChirpyRed:  user.IsChirpyRed,
 	})
 }
 
 func (cfg *apiConfig) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
+
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Could not read request body")
@@ -395,6 +443,8 @@ func (cfg *apiConfig) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	respondWithJSON(w, http.StatusOK, User{
 		ID:          user.ID,
 		Email:       user.Email,
+		CreatedAt:   user.CreatedAt,
+		UpdatedAt:   user.UpdatedAt,
 		IsChirpyRed: user.IsChirpyRed,
 	})
 }
@@ -455,25 +505,25 @@ func (cfg *apiConfig) handlePolkaWebhook(w http.ResponseWriter, r *http.Request)
 func (cfg *apiConfig) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	refreshToken, err := auth.GetBearerToken(r.Header)
 	if err != nil {
-		respondWithError(w, http.StatusUnauthorized, "1Unauthorized")
+		respondWithError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
 	dataRow, err := cfg.dbQueries.GetUserIDFromRefreshToken(r.Context(), refreshToken)
 	if err != nil {
-		respondWithError(w, http.StatusUnauthorized, "2Unauthorized")
+		respondWithError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
 	if dataRow.RevokedAt.Valid {
-		respondWithError(w, http.StatusUnauthorized, "3Unauthorized")
+		respondWithError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
 	if dataRow.ExpiresAt.Before(time.Now()) {
-		respondWithError(w, http.StatusUnauthorized, "4Unauthorized")
+		respondWithError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
 	accessToken, err := auth.MakeJWT(dataRow.UserID, cfg.tokenSecret, accessTokenDuration)
 	if err != nil {
-		respondWithError(w, http.StatusUnauthorized, "5Unauthorized")
+		respondWithError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
 	respondWithJSON(w, http.StatusOK, map[string]string{"token": accessToken})
