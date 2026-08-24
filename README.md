@@ -26,6 +26,20 @@ TOKEN_SECRET=<token_secret>
 POLKA_KEY=<polka_key>
 ```
 
+Make sure to have a PostgreSQL database running and to have the correct environment variables set.
+
+To run the server, first install the package:
+```bash
+go install github.com/Drag0neUsz/Chirpy@latest
+```
+
+Then run the server:
+```bash
+Chirpy
+```
+
+The application will be available at http://localhost:8080.
+
 ## Endpoints
 
 ### Admin
@@ -136,17 +150,15 @@ Query parameters:
 - `sort=<order>` - Returns all chirps in asc or desc order (default is ascending)
 Response body:
 ```json
-{
-	[
-		{
-			"id": "123e4567-e89b-12d3-a456-426614174000",
-			"created_at": "2021-01-01T00:00:00Z",
-			"updated_at": "2021-01-01T00:00:00Z",
-			"body": "Hello, world!",
-			"user_id": "123e4567-e89b-12d3-a456-426614174000"
-		}
-	]
-}
+[
+	{
+		"id": "123e4567-e89b-12d3-a456-426614174000",
+		"created_at": "2021-01-01T00:00:00Z",
+		"updated_at": "2021-01-01T00:00:00Z",
+		"body": "Hello, world!",
+		"user_id": "123e4567-e89b-12d3-a456-426614174000"
+	}
+]
 ```
 #### - `GET /api/chirps/{chirpID}` - Returns a specific chirp
 
@@ -188,4 +200,18 @@ Response body:
 Request headers:
 ```
 Authorization: Bearer <token>
+```
+
+### WebHooks
+
+#### - `POST /api/webhooks/polka` - Handles Polka webhooks
+
+Request body:
+```json
+{
+  "event": "user.upgraded",
+  "data": {
+    "user_id": "3311741c-680c-4546-99f3-fc9efac2036c"
+  }
+}
 ```
